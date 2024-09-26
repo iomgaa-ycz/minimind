@@ -15,6 +15,7 @@ from model.model import Transformer
 from model.LMConfig import LMConfig
 from model.dataset import PretrainDataset
 from accelerate import Accelerator
+import deepspeed
 
 warnings.filterwarnings('ignore')
 
@@ -52,7 +53,7 @@ def train_epoch(epoch, wandb):
             accelerator.backward(loss)
 
             if accelerator.sync_gradients:
-                accelerator.clip_grad_norm_(model.parameters())
+                accelerator.clip_grad_norm_(model.parameters(), args.grad_clip)
 
             optimizer.step()
             optimizer.zero_grad()
@@ -70,9 +71,11 @@ def train_epoch(epoch, wandb):
                     spend_time / (step + 1) * iter_per_epoch // 60 - spend_time // 60))
 
             if wandb is not None and accelerator.is_local_main_process:
-                wandb.log({"loss": loss.item(),
-                           "lr": lr,
-                           "epoch_Time": spend_time / (step + 1) * iter_per_epoch // 60 - spend_time // 60})
+                wandb.log({
+                    "loss": loss.item(),
+                    "lr": lr,
+                    "epoch_Time": spend_time / (step + 1) * iter_per_epoch // 60 - spend_time // 60
+                })
 
         if (step + 1) % args.save_interval == 0 and accelerator.is_local_main_process:
             accelerator.wait_for_everyone()
@@ -100,10 +103,10 @@ def init_model():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Pretraining")
     parser.add_argument("--out_dir", type=str, default="out", help="Output directory")
-    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
-    parser.add_argument("--dtype", type=str, default="bfloat16", help="Data type")
+    parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping threshold")
     parser.add_argument("--use_wandb", action="store_true", help="Use Weights & Biases")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="Weights & Biases project name")
     parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for data loading")
@@ -114,15 +117,15 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    args.wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}-UseAccelerator"
+
     lm_config = LMConfig()
     max_seq_len = lm_config.max_seq_len
-    args.save_dir = os.path.join(args.out_dir)
+    args.save_dir = os.path.join(args.out_dir, args.wandb_run_name)
     os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(args.out_dir, exist_ok=True)
     tokens_per_iter = args.batch_size * max_seq_len
     torch.manual_seed(1337)
-
-    args.wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
 
     accelerator = Accelerator()
 
@@ -130,6 +133,13 @@ if __name__ == "__main__":
         import wandb
         os.environ['WANDB_MODE'] = 'offline'
         wandb.init(project=args.wandb_project, name=args.wandb_run_name)
+        
+        # Log all args parameters
+        wandb.config.update(args)
+        
+        # Log DeepSpeed config if available
+        if hasattr(accelerator, 'deepspeed_config'):
+            wandb.config.update({'deepspeed_config': accelerator.deepspeed_config})
     else:
         wandb = None
 
@@ -149,11 +159,6 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
-
-    if False and platform.system() != 'Windows' and float(torch.__version__.split('.')[0]) >= 2:
-        Logger("compiling the model... (takes a ~minute)")
-        unoptimized_model = model
-        model = torch.compile(model)
 
     iter_per_epoch = len(train_loader)
     for epoch in range(args.epochs):

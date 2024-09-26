@@ -122,7 +122,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Pretraining")
     parser.add_argument("--out_dir", type=str, default="out", help="Output directory")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="Device to use")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="Data type")
@@ -131,7 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for data loading")
     parser.add_argument("--data_path", type=str, default="./dataset/pretrain_data.bin", help="Path to training data")
     parser.add_argument("--ddp", action="store_true", help="Use DistributedDataParallel")
-    parser.add_argument("--accumulation_steps", type=int, default=8, help="Gradient accumulation steps")
+    parser.add_argument("--accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping threshold")
     parser.add_argument("--warmup_iters", type=int, default=0, help="Number of warmup iterations")
     parser.add_argument("--log_interval", type=int, default=100, help="Logging interval")
@@ -139,16 +139,17 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    args.wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
+
     lm_config = LMConfig()
     max_seq_len = lm_config.max_seq_len
-    args.save_dir = os.path.join(args.out_dir)
+    args.save_dir = os.path.join(args.out_dir, args.wandb_run_name)
     os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(args.out_dir, exist_ok=True)
     tokens_per_iter = args.batch_size * max_seq_len
     torch.manual_seed(1337)
     device_type = "cuda" if "cuda" in args.device else "cpu"
 
-    args.wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
 
     ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast()
 
@@ -161,6 +162,9 @@ if __name__ == "__main__":
     if args.use_wandb and (not ddp or ddp_local_rank == 0):
         import wandb
         wandb.init(project=args.wandb_project, name=args.wandb_run_name)
+
+        # Log all args parameters
+        wandb.config.update(args)
     else:
         wandb = None
 
