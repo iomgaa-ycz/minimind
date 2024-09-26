@@ -52,7 +52,7 @@ def train_epoch(epoch, wandb):
             accelerator.backward(loss)
 
             if accelerator.sync_gradients:
-                accelerator.clip_grad_norm_(model.parameters(), args.grad_clip)
+                accelerator.clip_grad_norm_(model.parameters())
 
             optimizer.step()
             optimizer.zero_grad()
@@ -108,8 +108,6 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="Weights & Biases project name")
     parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for data loading")
     parser.add_argument("--data_path", type=str, default="./dataset/pretrain_data.bin", help="Path to training data")
-    parser.add_argument("--accumulation_steps", type=int, default=8, help="Gradient accumulation steps")
-    parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping threshold")
     parser.add_argument("--warmup_iters", type=int, default=0, help="Number of warmup iterations")
     parser.add_argument("--log_interval", type=int, default=100, help="Logging interval")
     parser.add_argument("--save_interval", type=int, default=1000, help="Model saving interval")
@@ -126,7 +124,7 @@ if __name__ == "__main__":
 
     args.wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
 
-    accelerator = Accelerator(gradient_accumulation_steps=args.accumulation_steps)
+    accelerator = Accelerator()
 
     if args.use_wandb and accelerator.is_local_main_process:
         import wandb
